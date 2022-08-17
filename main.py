@@ -36,6 +36,29 @@ operation_list = []
 analysis = {}
 
 
+def get_substring(char1, char2, s):
+    """Get substring of s from char1 to char2.
+
+    Parameters
+    ----------
+    char1 : char
+        _description_
+    char2 : _type_
+        _description_
+    s : _type_
+        _description_
+
+    Returns
+    -------
+    _type_
+        _description_
+    """
+    assert len(char1) == 1
+    assert len(char2) == 1
+    assert isinstance(s, str)
+    return s[s.find(char1) + 1:s.find(char2) + 1]
+
+
 def process_dataframe_operation(dataframe, op_name=None,
                                 argument=None, column_name=None):
     result = ColumnDomain()
@@ -75,11 +98,15 @@ def process_dataframe_operation(dataframe, op_name=None,
                 current["may"].add(column_name)
     else:
         # just simple column access
+        print(dataframe, column_name)
         if column_name:
             analysis[dataframe].\
                 current["must"].add(column_name)
             analysis[dataframe].\
                 current["may"].add(column_name)
+            print(f"Added {column_name} to {dataframe}.")
+            print(dataframe, analysis[dataframe])
+            print("*****")
     return dataframe, op_name, argument, column_name, result
 
 
@@ -207,6 +234,26 @@ def process_right(statement):
 
     candidate = list(s.split(']')[-1] for s in statements[0].split('['))[0]
     # print("POSSIBLE DF: ", candidate)
+    # geocode(df2['País'], provider='nominatim')['geometry']
+    if "geocode" in candidate:
+        temp = statement
+        temp = temp.replace('geocode', '')
+        first_arg = get_substring('(', ']', temp)
+        print(first_arg)
+        inner_df = list((s.split(']')[-1]
+                         for s in first_arg.split('[')))[0]
+        inner_col = re.findall(r"'\s*([^']+?)\s*'", first_arg)
+        print(inner_col)
+        print(inner_df)
+        # outer col is for same inner_df
+        dataframe, op_name, \
+            argument, column_name,\
+            result = process_dataframe_operation(inner_df,
+                                                 op_name=None,
+                                                 argument=None,
+                                                 column_name=inner_col[0])
+        print("DONE")
+        return dataframe, op_name, argument, column_name, result
 
     if PANDAS_ALIAS == candidate:
         # print("This is a function call, not a dataframe.")
@@ -308,12 +355,12 @@ def main(file_name='./data/guide-small.py'):
             elif len(current_line.split('=')) == 2:
                 statements = current_line.split('=')
 
-                variable = statements[0]
-                value = statements[1]
+                left = statements[0]
+                right = statements[1]
 
                 #   process right-hand-side
                 dataframe, op_name, argument, \
-                    column_name, result = process_right(value)
+                    column_name, result = process_right(right)
                 old = deepcopy(analysis)
 
                 #   process left-hand-side
@@ -321,7 +368,7 @@ def main(file_name='./data/guide-small.py'):
                 #   need to verify that the LHS is a dataframe
                 #   check that the RHS is a pandas statement
                 #   or that LHS is in list of dataframes
-                df_name, col_name = process_left(variable)
+                df_name, col_name = process_left(left)
                 if df_name not in analysis.keys():
                     analysis[df_name] = ColumnDomain()
 
@@ -343,7 +390,14 @@ def main(file_name='./data/guide-small.py'):
                                 and name not in old[dataframe].\
                                 original["may"]:
                             analysis[dataframe].added["may"].add(name)
+            elif "geocode" in current_line:
+                statements = current_line.split('=', 1)
 
+                left = statements[0]
+                right = statements[1]
+                print(left, right)
+                dataframe, op_name, argument, \
+                    column_name, result = process_right(right)
             elif any(i in current_line
                      for i in dataframes):
                 print("Operating on a dataframe")
