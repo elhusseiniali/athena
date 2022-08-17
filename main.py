@@ -70,7 +70,7 @@ def process_dataframe_operation(dataframe, op_name=None,
         if "join" in op_name:
             # set union for dataframe and argument
             # after checking that argument is a df
-            print(f"Joining {dataframe} and {argument}.")
+            # print(f"Joining {dataframe} and {argument}.")
             assert argument in dataframes
             result.current["may"] = analysis[dataframe].current["may"].\
                 union(analysis[argument].current["may"])
@@ -104,9 +104,6 @@ def process_dataframe_operation(dataframe, op_name=None,
                 current["must"].add(column_name)
             analysis[dataframe].\
                 current["may"].add(column_name)
-            print(f"Added {column_name} to {dataframe}.")
-            print(dataframe, analysis[dataframe])
-            print("*****")
     return dataframe, op_name, argument, column_name, result
 
 
@@ -239,20 +236,20 @@ def process_right(statement):
         temp = statement
         temp = temp.replace('geocode', '')
         first_arg = get_substring('(', ']', temp)
-        print(first_arg)
         inner_df = list((s.split(']')[-1]
                          for s in first_arg.split('[')))[0]
-        inner_col = re.findall(r"'\s*([^']+?)\s*'", first_arg)
-        print(inner_col)
-        print(inner_df)
+        cols = re.findall(r"'\s*([^']+?)\s*'", temp)
+        inner_col = cols[0]
+        outer_col = cols[-1]
+        column_name = outer_col
         # outer col is for same inner_df
-        dataframe, op_name, \
-            argument, column_name,\
-            result = process_dataframe_operation(inner_df,
-                                                 op_name=None,
-                                                 argument=None,
-                                                 column_name=inner_col[0])
-        print("DONE")
+        dataframe, _, \
+            _, _,\
+            _ = process_dataframe_operation(inner_df,
+                                            op_name=None,
+                                            argument=None,
+                                            column_name=inner_col)
+
         return dataframe, op_name, argument, column_name, result
 
     if PANDAS_ALIAS == candidate:
@@ -279,7 +276,6 @@ def process_right(statement):
         if '[' in statements[0] and ']' in statements[0]:
             column_name = re.findall(r"'\s*([^']+?)\s*'", statements[0])
             if column_name:
-                print(column_name[0])
                 column_name = column_name[0]
         else:
             # print("no column access; just a dataframe")
@@ -398,6 +394,37 @@ def main(file_name='./data/guide-small.py'):
                 print(left, right)
                 dataframe, op_name, argument, \
                     column_name, result = process_right(right)
+
+                old = deepcopy(analysis)
+
+                #   process left-hand-side
+
+                #   need to verify that the LHS is a dataframe
+                #   check that the RHS is a pandas statement
+                #   or that LHS is in list of dataframes
+                df_name, col_name = process_left(left)
+                if df_name not in analysis.keys():
+                    analysis[df_name] = ColumnDomain()
+
+                if result:
+                    analysis[df_name] = result
+
+                #   else the operation could either be irrelevant (so continue)
+                #   or ?
+
+                if col_name:
+                    if isinstance(col_name, str):
+                        col_name = [col_name]
+                    for name in col_name:
+                        analysis[df_name].current["must"].add(name)
+                        analysis[df_name].current["may"].add(name)
+                        if name not in old[dataframe].current["must"]\
+                            and name not in old[dataframe].current["may"]\
+                            and name not in old[dataframe].original["must"]\
+                                and name not in old[dataframe].\
+                                original["may"]:
+                            analysis[dataframe].added["may"].add(name)
+
             elif any(i in current_line
                      for i in dataframes):
                 print("Operating on a dataframe")
