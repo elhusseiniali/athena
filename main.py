@@ -38,6 +38,8 @@ analysis = {}
 
 def process_dataframe_operation(dataframe, op_name=None,
                                 argument=None, column_name=None):
+    result = ColumnDomain()
+
     if dataframe not in dataframes:
         dataframes.append(dataframe)
         # print(f"Added new dataframe: {dataframe}.")
@@ -46,6 +48,24 @@ def process_dataframe_operation(dataframe, op_name=None,
             # set union for dataframe and argument
             # after checking that argument is a df
             print(f"Joining {dataframe} and {argument}.")
+            assert argument in dataframes
+            result.current["may"] = analysis[dataframe].current["may"].\
+                union(analysis[argument].current["may"])
+            result.current["must"] = analysis[dataframe].current["must"].\
+                union(analysis[argument].current["must"])
+            result.original["may"] = analysis[dataframe].original["may"].\
+                union(analysis[argument].original["may"])
+            result.original["must"] = analysis[dataframe].original["must"].\
+                union(analysis[argument].original["must"])
+            result.added["may"] = analysis[dataframe].added["may"].\
+                union(analysis[argument].added["may"])
+            result.added["must"] = analysis[dataframe].added["must"].\
+                union(analysis[argument].current["must"])
+            result.removed["may"] = analysis[dataframe].removed["may"].\
+                union(analysis[argument].removed["may"])
+            result.removed["must"] = analysis[dataframe].removed["must"].\
+                union(analysis[argument].removed["must"])
+
         elif "apply" in op_name:
             assert column_name
             # print(f"Apply a function: {op_name}({argument}).")
@@ -60,7 +80,7 @@ def process_dataframe_operation(dataframe, op_name=None,
                 current["must"].add(column_name)
             analysis[dataframe].\
                 current["may"].add(column_name)
-    return dataframe, op_name, argument, column_name
+    return dataframe, op_name, argument, column_name, result
 
 
 def process_pandas_call(statement):
@@ -180,6 +200,8 @@ def process_right(statement):
     op_name = ''
     argument = ''
     column_name = ''
+    result = ''
+
     statements = statement.split(".", 1)
     statements[0] = statements[0].replace(" ", '')
 
@@ -236,12 +258,14 @@ def process_right(statement):
             # print("arg: ", argument)
             # print("dataframe: ", dataframe)
 
-            process_dataframe_operation(dataframe, op_name,
-                                        argument, column_name)
+            _, _, _, _, result = process_dataframe_operation(dataframe,
+                                                             op_name,
+                                                             argument,
+                                                             column_name)
         else:
             # print("What the hell is going on?")
             pass
-    return dataframe, op_name, argument, column_name
+    return dataframe, op_name, argument, column_name, result
 
 
 def main(file_name='./data/guide-small.py'):
@@ -288,8 +312,8 @@ def main(file_name='./data/guide-small.py'):
                 value = statements[1]
 
                 #   process right-hand-side
-                dataframe, op_name, \
-                    argument, column_name = process_right(value)
+                dataframe, op_name, argument, \
+                    column_name, result = process_right(value)
                 old = deepcopy(analysis)
 
                 #   process left-hand-side
@@ -300,6 +324,9 @@ def main(file_name='./data/guide-small.py'):
                 df_name, col_name = process_left(variable)
                 if df_name not in analysis.keys():
                     analysis[df_name] = ColumnDomain()
+
+                if result:
+                    analysis[df_name] = result
 
                 #   else the operation could either be irrelevant (so continue)
                 #   or ?
