@@ -446,6 +446,6 @@ def main(file_name='./data/guide-small.py'):
 
 if __name__ == "__main__":
     input_file = './data/guide-small.py'
-    main()
+    main(input_file)
     for key in analysis.keys():
         print(key, analysis[key])
