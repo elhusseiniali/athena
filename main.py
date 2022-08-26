@@ -7,6 +7,8 @@ from domain import ColumnDomain
 import pprint
 from copy import deepcopy
 
+import ast
+
 
 types = {
     "NAME": 1,
@@ -15,7 +17,9 @@ types = {
     "NEWLINE": 4,
     "COMMENT": 60,
     "NL": 61,
-    "ENDMARKER": 0
+    "ENDMARKER": 0,
+    "INDENT": 5,
+    "DEDENT": 6
 }
 
 indices = {
@@ -59,6 +63,41 @@ def get_substring(char1, char2, s):
     return s[s.find(char1) + 1:s.find(char2) + 1]
 
 
+def is_valid_python(statement):
+    try:
+        ast.parse(statement)
+    except SyntaxError:
+        return False
+    return True
+
+
+def is_literal(statement):
+    try:
+        return ast.literal_eval(statement)
+    except Exception:
+        return None
+
+
+def is_pandas(statement):
+    # pd.something
+    if PANDAS_ALIAS in statement.split('.', 1)[0]:
+        return True
+    # df.something
+    # caveat here is we have to have already seen the df
+    elif ".apply" in statement:
+        return True
+    elif "geocode" in statement:
+        return True
+    elif is_literal(statement):
+        return False
+    else:
+        for i in dataframes:
+            if statement.startswith(i):
+                print("df: ", i)
+                return True
+    return False
+
+
 def process_dataframe_operation(dataframe, op_name=None,
                                 argument=None, column_name=None):
     result = ColumnDomain()
@@ -98,7 +137,6 @@ def process_dataframe_operation(dataframe, op_name=None,
                 current["may"].add(column_name)
     else:
         # just simple column access
-        print(dataframe, column_name)
         if column_name:
             analysis[dataframe].\
                 current["must"].add(column_name)
@@ -129,10 +167,16 @@ def process_pandas_call(statement):
             dataframes.append(df_name)
 
         if col_name:
-            print(f"Converting column to date-time: {col_name}")
             for name in col_name:
                 analysis[df_name].current["must"].add(name)
                 analysis[df_name].current["must"].add(name)
+
+    elif "set_option" in statement:
+        pass
+
+    else:
+        print("PANDAS CALL")
+        print(statement)
 
     return df_name, op_name, argument, col_name
 
@@ -173,17 +217,16 @@ def process_left(variable):
                     or '=' in argument \
                     or '!' in argument:
                 elements = argument.split(',')
-                print(elements)
                 elements[0] = elements[0].rsplit('>', 1)[0]
                 elements[0] = elements[0].rsplit('<', 1)[0]
                 elements[0] = elements[0].rsplit('=', 1)[0]
+                #   ????????
                 elements[0] = elements[0].rsplit('!', 1)[0]
 
                 elements[0] = elements[0].replace(' ', '')
                 elements[1] = elements[1].replace(' ', '')
 
                 #   get inner df and column names
-                print(elements[0])
                 left_col = re.findall(r"'\s*([^']+?)\s*'", elements[0])[0]
 
                 left_df = list(s.split(']')[-1]
@@ -213,7 +256,6 @@ def process_right(statement):
     ----------
     statement : (str)
         Right-hand-side statement.
-        ADD ASSERT TO CHECK THAT IT'S A VALID PYTHON STATEMENT
 
     Returns
     -------
@@ -226,12 +268,13 @@ def process_right(statement):
     column_name = ''
     result = ''
 
+    assert is_valid_python(statement)
+
     statements = statement.split(".", 1)
     statements[0] = statements[0].replace(" ", '')
 
     candidate = list(s.split(']')[-1] for s in statements[0].split('['))[0]
     # print("POSSIBLE DF: ", candidate)
-    # geocode(df2['País'], provider='nominatim')['geometry']
     if "geocode" in candidate:
         temp = statement
         temp = temp.replace('geocode', '')
@@ -242,14 +285,15 @@ def process_right(statement):
         inner_col = cols[0]
         outer_col = cols[-1]
         column_name = outer_col
-        # outer col is for same inner_df
+        #   outer col is for same inner_df
+        #   inner_col is added to inner_df in the following function call
         dataframe, _, \
             _, _,\
             _ = process_dataframe_operation(inner_df,
                                             op_name=None,
                                             argument=None,
                                             column_name=inner_col)
-
+        #   outer_col is return with inner_df; addition is done outside
         return dataframe, op_name, argument, column_name, result
 
     if PANDAS_ALIAS == candidate:
@@ -269,6 +313,7 @@ def process_right(statement):
         #          - check if any operation (from SUPPORTED_TRANSFORMATIONS)
         #            is being applied
         #          - what else?
+
         dataframe = candidate
         if candidate not in dataframes:
             dataframes.append(candidate)
@@ -281,33 +326,28 @@ def process_right(statement):
             # print("no column access; just a dataframe")
             pass
 
-        if candidate in dataframes:
-            # whole if-block can be outside of this if
-            # because we basically guarantee that candidate is in dataframes
-            # on line 208
-            dataframe = candidate
-            # print("We have the dataframe ", dataframe)
+        dataframe = candidate
+        # print("We have the dataframe ", dataframe)
+        print("STATEMENTS: ", statements)
 
-            full_op = list((s.split(']')[-1]
-                            for s in statements[1].split('[')))[0]
-            # print("op: ", full_op)
+        full_op = list((s.split(']')[-1]
+                        for s in statements[1].split('[')))[0]
+        # print("op: ", full_op)
 
-            op_name = (s.split(')')[-1] for s in full_op.split('('))
-            op_name = list(op_name)[0].replace(" ", '')
-            # print("op_name: ", op_name)
+        op_name = (s.split(')')[-1] for s in full_op.split('('))
+        op_name = list(op_name)[0].replace(" ", '')
+        # print("op_name: ", op_name)
 
-            argument = full_op[full_op.find("(") + 1:
-                               full_op.rfind(")")]
-            # print("arg: ", argument)
-            # print("dataframe: ", dataframe)
+        argument = full_op[full_op.find("(") + 1:
+                           full_op.rfind(")")]
+        # print("arg: ", argument)
+        # print("dataframe: ", dataframe)
 
-            _, _, _, _, result = process_dataframe_operation(dataframe,
-                                                             op_name,
-                                                             argument,
-                                                             column_name)
-        else:
-            # print("What the hell is going on?")
-            pass
+        _, _, _, _, result = process_dataframe_operation(dataframe,
+                                                         op_name,
+                                                         argument,
+                                                         column_name)
+
     return dataframe, op_name, argument, column_name, result
 
 
@@ -318,8 +358,12 @@ def main(file_name='./data/guide-small.py'):
         for index, token in enumerate(tokens):
             current_line = token[indices["line"]].replace('"', "'")
             current_line = current_line.replace('\n', '')
+            current_line = current_line.replace('\t', '')
+            current_line = current_line.split('#', 1)[0]
+
             if token[indices["type"]] in (types["COMMENT"], types["NEWLINE"],
-                                          types["NL"], types["ENDMARKER"]):
+                                          types["NL"], types["ENDMARKER"],
+                                          types["INDENT"], types["DEDENT"]):
                 continue
             if old_line == current_line:
                 continue
@@ -339,98 +383,92 @@ def main(file_name='./data/guide-small.py'):
 
                 analysis[df_name] = ColumnDomain()
 
-            #   what if it isn't 2? then we have more than 1 equal per line
-            #   this means that it's still of the form A = B, but there's some
-            #   equal sign(s) to pass arguments probably
-            #   should use the =1 arg in the split and check that the split
-            #   is more than 1
-            #   still a problem with df.dropna(inplace=True) for example
-            #   could maybe check if LHS and RHS are well-formed
-            #   use ast.parse(code), with SyntaxError exception
-            #   https://stackoverflow.com/questions/11854745/how-to-tell-if-a-string-contains-valid-python-code
-            elif len(current_line.split('=')) == 2:
-                statements = current_line.split('=')
-
-                left = statements[0]
-                right = statements[1]
-
-                #   process right-hand-side
-                dataframe, op_name, argument, \
-                    column_name, result = process_right(right)
-                old = deepcopy(analysis)
-
-                #   process left-hand-side
-
-                #   need to verify that the LHS is a dataframe
-                #   check that the RHS is a pandas statement
-                #   or that LHS is in list of dataframes
-                df_name, col_name = process_left(left)
-                if df_name not in analysis.keys():
-                    analysis[df_name] = ColumnDomain()
-
-                if result:
-                    analysis[df_name] = result
-
-                #   else the operation could either be irrelevant (so continue)
-                #   or ?
-
-                if col_name:
-                    if isinstance(col_name, str):
-                        col_name = [col_name]
-                    for name in col_name:
-                        analysis[df_name].current["must"].add(name)
-                        analysis[df_name].current["may"].add(name)
-                        if name not in old[dataframe].current["must"]\
-                            and name not in old[dataframe].current["may"]\
-                            and name not in old[dataframe].original["must"]\
-                                and name not in old[dataframe].\
-                                original["may"]:
-                            analysis[dataframe].added["may"].add(name)
-            elif "geocode" in current_line:
+            elif '=' in current_line:
                 statements = current_line.split('=', 1)
 
-                left = statements[0]
-                right = statements[1]
-                print(left, right)
-                dataframe, op_name, argument, \
-                    column_name, result = process_right(right)
+                left = statements[0].replace(' ', '')
+                right = statements[1].lstrip()
 
-                old = deepcopy(analysis)
+                #   check that the statement is an assignment left = right
+                #   we're missing A(arg=val) = B
+                if is_valid_python(left) and is_valid_python(right):
+                    print(left, right)
 
-                #   process left-hand-side
+                    if is_pandas(right) or is_pandas(left):
+                        print("inside: ", left, right)
+                        #   process right-hand-side
+                        dataframe, op_name, argument, \
+                            column_name, result = process_right(right)
+                        old = deepcopy(analysis)
 
-                #   need to verify that the LHS is a dataframe
-                #   check that the RHS is a pandas statement
-                #   or that LHS is in list of dataframes
-                df_name, col_name = process_left(left)
-                if df_name not in analysis.keys():
-                    analysis[df_name] = ColumnDomain()
+                        #   process left-hand-side
 
-                if result:
-                    analysis[df_name] = result
+                        #   need to verify that the LHS is a dataframe
+                        #   check that the RHS is a pandas statement
+                        #   or that LHS is in list of dataframes
+                        df_name, col_name = process_left(left)
 
-                #   else the operation could either be irrelevant (so continue)
-                #   or ?
+                        if df_name not in analysis.keys():
+                            analysis[df_name] = ColumnDomain()
 
-                if col_name:
-                    if isinstance(col_name, str):
-                        col_name = [col_name]
-                    for name in col_name:
-                        analysis[df_name].current["must"].add(name)
-                        analysis[df_name].current["may"].add(name)
-                        if name not in old[dataframe].current["must"]\
-                            and name not in old[dataframe].current["may"]\
-                            and name not in old[dataframe].original["must"]\
-                                and name not in old[dataframe].\
-                                original["may"]:
-                            analysis[dataframe].added["may"].add(name)
+                        if result:
+                            analysis[df_name] = result
 
-            elif any(i in current_line
-                     for i in dataframes):
-                print("Operating on a dataframe")
+                        if col_name:
+                            if isinstance(col_name, str):
+                                col_name = [col_name]
+                            for name in col_name:
+                                analysis[df_name].current["must"].add(name)
+                                analysis[df_name].current["may"].add(name)
+                                if name not in old[dataframe].current["must"]\
+                                    and name not in old[dataframe].\
+                                        current["may"]\
+                                   and name not in old[dataframe].\
+                                        original["must"]\
+                                        and name not in old[dataframe].\
+                                        original["may"]:
+                                    analysis[dataframe].added["may"].add(name)
+                # else:
+                    # print("Not an assignment.")
+            if "for " in current_line:
+                print("For-loop")
+            elif "while " in current_line:
+                print("While loop")
+            elif "if " in current_line:
+                # also captures elif statements
+                print("Conditional")
+            elif "else" in current_line:
+                print("Else block")
+            elif "def " in current_line:
+                print("Function declaration")
+            elif "return " in current_line:
+                print("Return statement")
+
+            elif '=' not in current_line:
+                statements = current_line.split('.', 1)
+                if any(i in current_line
+                       for i in dataframes):
+                    print("Operating on a dataframe")
+                    if statements[0] in dataframes:
+                        print("Yes")
+                    else:
+                        print("No")
+                elif statements[0] == PANDAS_ALIAS:
+                    process_pandas_call(statements[1])
+                else:
+                    print(f"no = but: {statements[0]}")
+            #   consider adding support for bokeh.plotting.figure
+            if "plt." in current_line:
+                print(current_line)
+                print("PLT")
+            elif "sns." in current_line:
+                print(statements)
+                print("SNS")
+            elif "folium" in current_line:
+                print(statements)
+                print("FOLIUM")
             else:
-                # one more case for pd. statements
-                pass
+                print(f"Else: {current_line}")
 
             old_line = current_line
 
@@ -445,7 +483,7 @@ def main(file_name='./data/guide-small.py'):
 
 
 if __name__ == "__main__":
-    input_file = './data/guide-small.py'
+    input_file = './data/guide.py'
     main(input_file)
     for key in analysis.keys():
         print(key, analysis[key])
